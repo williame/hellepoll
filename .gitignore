@@ -1,0 +1,10 @@
+# (c) William Edwards, 2011
+# Using the Simplified BSD License.  See LICENSE file for details
+
+.*
+*~
+*.opp
+*.dep
+/helloworld
+/helloworld.log
+perf.data*
