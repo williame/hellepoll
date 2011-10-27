@@ -15,6 +15,11 @@ You only write this kind of code if you are concerned about speed :)
 
 (At 40K/sec on my laptop I am running out of memory bandwidth, and my CPU is not maxed out yet.  Numbers ought to be higher on normal server-like hardware.)
 
+Where to start?
+---------------
+
+Look at helloworld.cpp.  Its mostly about parsing commandline arguments, but in there is a simple class that prints "Hello world" on every request.  Can't start simplier than that!
+
 Status
 ------
 
