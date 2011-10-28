@@ -44,6 +44,8 @@ protected:
 	InLine<1024*5> line;
 	bool keep_alive;
 private:
+	inline void finishHeader();
+private:
 	enum {
 		LINE,
 		HEADER,

@@ -35,7 +35,8 @@ void HelloWorld::factory(Scheduler& scheduler,FD accept_fd) {
 void HelloWorld::on_body() {
 	count++;
 	writeHeader("Content-Length","18");
-	writef("Hello World %6d",count);
+	write("Hello ");
+	writef("World %6d",count);
 	finish();
 }
 
@@ -97,8 +98,11 @@ int main(int argc,char* argv[]) {
 		signal(SIGCHLD, SIG_IGN);
 		if(console)
 			Console::create(scheduler);
-		Listener::create(scheduler,"HTTP",port,HelloWorld::factory,100);
+		Listener::create(scheduler,"HTTP",port,HelloWorld::factory,100,true);
 		scheduler.run();
+	} catch(Error* e) {
+		e->dump();
+		e->release();
 	} catch(std::exception& e) {
 		fprintf(stderr,"%s",e.what());
 	} catch(...) {

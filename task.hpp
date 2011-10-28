@@ -36,7 +36,7 @@ public:
 };
 
 bool starts_with(const char* s,const char* prefix);
-bool ends_with(const char* s,const char* suffix);
+bool ends_with(const char* s,const char* suffix,size_t suffix_len = 0);
 
 template<int MAX> class InLine {
 public:
@@ -46,8 +46,15 @@ public:
 	void clear() { len = bufz[0] = 0; }
 	char* cstr() { return bufz; }
 	const char* cstr() const { return bufz; }
-	bool starts_with(const char* prefix) const { return ::starts_with(bufz,prefix); }
-	bool ends_with(const char* suffix) const { return ::ends_with(bufz,suffix); }
+	inline bool starts_with(const char* prefix,size_t prefix_len = 0) const {
+		prefix_len = prefix_len || strlen(prefix);
+		return (prefix_len>len? false: !memcmp(prefix,bufz,prefix_len));
+	}
+	inline bool ends_with(const char* suffix,size_t suffix_len = 0) const {
+		suffix_len = suffix_len || strlen(suffix);
+		const char* tail = bufz+len-suffix_len;
+		return (suffix_len>len? false: !memcmp(suffix,tail,suffix_len));
+	}
 	size_t size() const { return len; }
 private:
 	char bufz[MAX+1];

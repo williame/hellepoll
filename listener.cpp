@@ -6,18 +6,20 @@
 #include <arpa/inet.h>
 #include <string.h>
 
-void Listener::create(Scheduler& scheduler,const char* name,short port,Factory factory,int backlog) {
-	Listener* self = new Listener(scheduler,name,port,factory,backlog);
+void Listener::create(Scheduler& scheduler,const char* name,short port,Factory factory,int backlog,bool reuse_addr) {
+	Listener* self = new Listener(scheduler,name,port,factory,backlog,reuse_addr);
 	self->construct();
 }
 
-Listener::Listener(Scheduler& scheduler,const char* n,short p,Factory f,int b):
-	Task(scheduler), name(n), port(p), factory(f), backlog(b) {}
+Listener::Listener(Scheduler& scheduler,const char* n,short p,Factory f,int b,bool ra):
+	Task(scheduler), name(n), port(p), factory(f), backlog(b), reuse_addr(ra) {}
 	
 void Listener::do_construct() {
 	check(fd = socket(AF_INET,SOCK_STREAM,0));
-	int yes = 1;
-	check(setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes)));
+	if(reuse_addr) {
+		int yes = 1;
+		check(setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes)));
+	}
 	sockaddr_in addr;
 	memset(&addr,0,sizeof(addr));
 	addr.sin_family = AF_INET;
@@ -44,6 +46,7 @@ void Listener::read() {
 					break;
 				case ENFILE:
 				case EMFILE:
+					//### hmm, what to do? policy please
 					ThrowInternalError("not enough FDs");
 				default:
 					fail("error in accept");
@@ -62,6 +65,6 @@ void Listener::read() {
 }
 
 void Listener::dump_context(FILE* out) const {
-	fprintf(out,"Listener[%s@%hd] ",name,port);
+	fprintf(out,"Listener[%s@%hu] ",name,port);
 }
 

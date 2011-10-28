@@ -828,8 +828,8 @@ bool starts_with(const char* s,const char* prefix) {
 	return true;
 }
 
-bool ends_with(const char* s,const char* suffix) {
-	const int slen = strlen(s), tlen = strlen(suffix);
+bool ends_with(const char* s,const char* suffix,size_t suffix_len) {
+	const size_t slen = strlen(s), tlen = suffix_len || strlen(suffix);
 	return ((slen>tlen) && !strcmp(suffix,s+slen-tlen));
 }
 

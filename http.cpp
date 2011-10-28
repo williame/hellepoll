@@ -43,9 +43,9 @@ void HttpServerConnection::read() {
 				// so we get end-of-stream when keep-alive?  no problem
 				return;
 			}
-			if(!line.ends_with("\r\n"))
+			if(!line.ends_with("\r\n",2))
 				HttpError::Throw(HttpError::ERequestURITooLong,*this);
-			if(!strcmp(line.cstr(),"\r\n")) { // empty lines are ok before request line
+			if(!memcmp(line.cstr(),"\r\n",3)) { // empty lines are ok before request line
 				line.clear();
 				continue;
 			}
@@ -55,9 +55,9 @@ void HttpServerConnection::read() {
 				const char* method = strtok(line.cstr()," ");
 				strncpy(uri,strtok(NULL," \r"),sizeof(this->uri));
 				const char* v = strtok(NULL,"\r");
-				if(!strcmp(v,"HTTP/1.1"))
+				if(!memcmp(v,"HTTP/1.1",9))
 					version = HTTP_1_1;
-				else if(!strcmp(v,"HTTP/1.0"))
+				else if(!memcmp(v,"HTTP/1.0",9))
 					version = HTTP_1_0;
 				else
 					version = HTTP_0_9;
@@ -71,7 +71,7 @@ void HttpServerConnection::read() {
 		case HEADER:
 			if(!async_read_in(line))
 				return;
-			if(!strcmp("\r\n",line.cstr())) {
+			if(!memcmp("\r\n",line.cstr(),3)) {
 				read_state = BODY;
 				if(keep_alive && !in_encoding_chunked && (-1 == in_content_length))
 					in_content_length = 0; // length isn't specified, yet its keep-alive, so there is no content
@@ -79,11 +79,11 @@ void HttpServerConnection::read() {
 				on_body();
 				break;
 			}
-			if(!line.ends_with("\r\n"))
+			if(!line.ends_with("\r\n",2))
 				HttpError::Throw(HttpError::ERequestEntityTooLarge,*this);
 			{
 				const char* header = strtok(line.cstr()," "), *value = strtok(NULL,"\r");
-				if(!ends_with(header,":"))
+				if(!ends_with(header,":",1))
 					HttpError::Throw(HttpError::EBadRequest,*this);
 				if((write_state == LINE) && !strcasecmp(header,"connection:") && !strcasecmp(value,"keep-alive"))
 					keep_alive = true;
@@ -136,7 +136,7 @@ void HttpServerConnection::writeResponseCode(int code,const char* message) {
 		ThrowInternalError("cannot write response code");
 	write_state = HEADER;
 	async_printf("HTTP/%s %d %s\r\nConnection: %s\r\n%s",(version==HTTP_1_1?"1.1":"1.0"),code,message,
-		keep_alive?"Keep-Alive":"close",out_encoding_chunked?"Transfer-Encoding: chunked\r\n":"");
+		keep_alive?"keep-alive":"close",out_encoding_chunked?"Transfer-Encoding: chunked\r\n":"");
 }
 
 void HttpServerConnection::writeHeader(const char* header,const char* value) {
@@ -147,15 +147,22 @@ void HttpServerConnection::writeHeader(const char* header,const char* value) {
 	async_printf("%s: %s\r\n",header,value);
 }
 
-void HttpServerConnection::write(const void* ptr,size_t len) {
-	if(write_state == LINE)
-		writeResponseCode(200,"OK");
-	else if(write_state == HEADER)
+void HttpServerConnection::finishHeader() {
+	if(write_state == LINE || write_state == HEADER) {
+		if(write_state == LINE)
+			writeResponseCode(200,"OK");
 		async_write("\r\n");
+		write_state = BODY;
+	} else if(write_state != BODY)
+		ThrowInternalError("connection not ready for body");
+}
+
+void HttpServerConnection::write(const void* ptr,size_t len) {
+	if(!len) return;
+	finishHeader();
 	if(out_encoding_chunked)
 		async_printf("%zx\r\n",len);
-	if(len)
-		async_write(ptr,len);
+	async_write(ptr,len);
 }
 
 void HttpServerConnection::write(const char* str) {
@@ -180,7 +187,9 @@ void HttpServerConnection::writef(const char* fmt,...) {
 }
 
 void HttpServerConnection::finish() {
-	write(NULL,0); // empty chunk if encoding_chunked
+	finishHeader();
+	if(out_encoding_chunked) // finish chunk
+		async_write("0\r\n\r\n");
 	if(keep_alive) {
 		write_state = LINE;
 		set_nodelay(true); // will flush it, approximately
