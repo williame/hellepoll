@@ -34,7 +34,7 @@ void Out::dump_debug(FILE* out) const {
 bool Out::async_write(Task* task) {
 	const char* c = reinterpret_cast<const char*>(ptr);
 	size_t written;
-	const bool completed = task->async_write(c+ofs,len-ofs,written);
+	const bool completed = task->do_async_write(c+ofs,len-ofs,written);
 	ofs += written;
 	if(!completed)
 		return false;

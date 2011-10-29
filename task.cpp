@@ -137,10 +137,11 @@ Task::Timeout::Timeout(): due(0) {
 
 Task::Task(Scheduler& s,Task* parent): fd(-1), scheduler(s), out(NULL), half_close(NULL),
 	log(0U), logMask(0U),tid(nexttid()),
-	buflen(0), next_close(NULL), del_ok(false), closed(false), eoinput(false),
+	next_close(NULL), del_ok(false), closed(false), eoinput(false),
 	sated(true), totalWritten(0), totalRead(0),
 	tree_parent(parent), tree_first_child(NULL), tree_next_sibling(NULL),
-	read_ahead_buffer(0), read_ahead_ofs(0), read_ahead_len(0) {
+	read_ahead_buffer(NULL), read_ahead_ofs(0), read_ahead_len(0),
+	write_buffer(NULL), write_buffer_len(0), write_buffer_maxlen(0) {
 	memset(&event,0,sizeof(event));
 	event.data.ptr = this;
 	event.events = 0;
@@ -174,6 +175,7 @@ Task::~Task() {
 	if(link.next)
 		link.next->link.prev = link.prev;
 	free(read_ahead_buffer);
+	free(write_buffer);
 }
 
 void Task::close_fd() {
@@ -259,6 +261,25 @@ void Task::setReadAheadBufferSize(uint16_t size) {
 	}
 }
 
+void Task::setWriteBufferSize(uint16_t size) {
+	if(write_buffer) {
+		async_write_buffered();
+		if(size) {
+			if(uint8_t* tmp = (uint8_t*)realloc(write_buffer,size)) {
+				write_buffer = tmp;
+				write_buffer_maxlen = size;
+			} // else log it failed?
+		} else {
+			free(write_buffer);
+			write_buffer = NULL;
+		}
+	} else {
+		write_buffer_maxlen = size;
+		write_buffer_len = 0;
+		write_buffer = (uint8_t*)malloc(size);
+	}	
+}
+
 static void DebugTaskTotals(Task& task,uint32_t prevWritten,uint32_t prevRead) {
 	if(task.Log(LOG_DEBUG)) {
 		const uint32_t written = (task.get_bytes_written() - prevWritten), read = (task.get_bytes_read() - prevRead);
@@ -293,25 +314,32 @@ void Task::run(uint32_t flags) {
 		if(~(EPOLLIN|EPOLLOUT)&flags)
 			ThrowInternalError("unexpected event");
 		if(!half_close && (EPOLLIN&flags)) {
-			if(timeout.read.due)
-				timeout.read.due = (scheduler.get_now() + timeout.read.timeout);
 			try {
-				sated = false;
-				read();
-				if(!sated && (EPOLLET & event.events) && (EPOLLIN & event.events))
-					ThrowInternalError("not sated");
-			} catch(HalfClose* hc) {
+				if(timeout.read.due)
+					timeout.read.due = (scheduler.get_now() + timeout.read.timeout);
+				try {
+					sated = false;
+					read();
+					if(!sated && (EPOLLET & event.events) && (EPOLLIN & event.events))
+						ThrowInternalError("not sated");
+				} catch(HalfClose* hc) {
+					sated = true;
+					if(!out)
+						throw;
+					hc->dump(this);
+					hc->release();
+					unschedule(EPOLLIN);
+					/*check(*/shutdown(fd,SHUT_RD)/*)*/;
+					half_close = hc->msg? hc->msg: "";
+				}
 				sated = true;
-				if(!out)
-					throw;
-				hc->dump(this);
-				hc->release();
-				unschedule(EPOLLIN);
-				/*check(*/shutdown(fd,SHUT_RD)/*)*/;
-				half_close = hc->msg;
+			} catch(...) {
+				async_write_buffered();
+				throw;
 			}
-			sated = true;
 		}
+		if(write_buffer_len)
+			async_write_buffered();
 		if(EPOLLOUT&flags) {
 			if(timeout.write.due)
 				timeout.write.due = (scheduler.get_now() + timeout.write.timeout);
@@ -324,8 +352,10 @@ void Task::run(uint32_t flags) {
 			}
 			if(!out) {
 				unschedule(EPOLLOUT);
-				if(half_close)
-					ThrowGracefulClose(half_close);
+				if(half_close) {
+					close();
+					return;
+				}
 			}
 		}
 	} catch(...) {
@@ -599,22 +629,6 @@ uint16_t Task::async_read_buffered(uint8_t*& ptr,uint16_t max) {
 	return 0;
 }
 
-bool Task::async_read(void* ptr,ssize_t bytes) {
-	assert(bytes <= MAX_BUF);
-	for(;;) {
-		if(buflen == bytes) {
-			memcpy(ptr,buf,bytes);
-			buflen = 0;
-			return true;
-		}
-		ssize_t read;
-		const bool complete = async_read(buf+buflen,bytes-buflen,read);
-		buflen += read;
-		if(!complete)
-			return false;
-	}
-}
-
 bool Task::async_read(ResizeableBuffer& in,ssize_t& read,ssize_t max) {
 	read = 0;
 	for(;;) {
@@ -634,9 +648,16 @@ bool Task::async_read(ResizeableBuffer& in,ssize_t& read,ssize_t max) {
 
 bool Task::async_read_str(char* s,size_t& len,size_t max) {
 	while(len < max) {
-		if(!async_read(s+len,1)) {
-			s[len] = 0;
-			return false;
+		if(read_ahead_buffer && read_ahead_len) {
+			s[len] = (char)read_ahead_buffer[read_ahead_ofs];
+			if(++read_ahead_ofs == read_ahead_len)
+				read_ahead_ofs = read_ahead_len = 0;
+		} else {
+			ssize_t read;
+			if(!async_read(s+len,1,read)) {
+				s[len] = 0;
+				return false;
+			}
 		}
 		if(!s[len] || ('\n'==s[len]))
 			break;
@@ -646,7 +667,37 @@ bool Task::async_read_str(char* s,size_t& len,size_t max) {
 	return true;
 }
 
+void Task::async_write_buffered() {
+	if(!write_buffer || !write_buffer_len) return;
+	if(!out) {
+		OutConst o(write_buffer,write_buffer_len);
+		if(!o.async_write(this)) {
+			uint8_t* buf = new uint8_t[write_buffer_len-o.ofs];
+			size_t len = write_buffer_len-o.ofs;
+			memcpy(buf,write_buffer+o.ofs,len);
+			out = new OutDeleteArray<uint8_t>(buf,len);
+			schedule(EPOLLOUT);
+		}
+	} else {
+		Out* tail = out;
+		while(tail->next)
+			tail = tail->next;
+		uint8_t* buf = new uint8_t[write_buffer_len];
+		memcpy(buf,write_buffer,write_buffer_len);
+		tail->next = new OutDeleteArray<uint8_t>(buf,write_buffer_len);
+	}
+	write_buffer_len = 0;
+}
+
 void Task::async_write(const void* ptr,size_t len) {
+	if(write_buffer) {
+		if(len <= (write_buffer_maxlen-write_buffer_len)) {
+			memcpy(write_buffer+write_buffer_len,ptr,len);
+			write_buffer_len += len;
+			return;
+		}
+		async_write_buffered();
+	}
 	if(!out) {
 		OutConst o(ptr,len);
 		if(!o.async_write(this)) {
@@ -663,6 +714,14 @@ void Task::async_write(const void* ptr,size_t len) {
 
 void Task::async_write_cpy(const void* ptr,size_t len) {
 	/* if ptr cannot be completely written synchronously, a copy of the unsent part is made */
+	if(write_buffer) {
+		if(len <= (write_buffer_maxlen-write_buffer_len)) {
+			memcpy(write_buffer+write_buffer_len,ptr,len);
+			write_buffer_len += len;
+			return;
+		}
+		async_write_buffered();
+	}
 	if(!out) {
 		OutConst o(ptr,len);
 		if(!o.async_write(this)) {
@@ -698,6 +757,15 @@ void Task::async_write_cpy(const void* ptr,size_t len) {
 
 void Task::async_write(Out* o) {
 	Cleanup<Out,CleanupRelease> c(o);
+	if(write_buffer) {
+		ssize_t len = (o->len-o->ofs);
+		if(len <= (write_buffer_maxlen-write_buffer_len)) {
+			memcpy(write_buffer+write_buffer_len,(char*)o->ptr+o->ofs,len);
+			write_buffer_len += len;
+			return;
+		}
+		async_write_buffered();
+	}
 	if(!out) {
 		if(!c->async_write(this)) {
 			out = c.detach();
@@ -736,7 +804,7 @@ void Task::async_vprintf(const char* fmt,va_list ap) {
 		async_write_cpy(buf,len);
 }
 
-bool Task::async_write(const void* ptr,size_t len,size_t& written) {
+bool Task::do_async_write(const void* ptr,size_t len,size_t& written) {
 	if(closed) // ignore half_closed, so don't use is_closed()
 		ThrowInternalError("cannot write when closed");
 	written = 0;

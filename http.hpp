@@ -20,8 +20,7 @@ protected:
 	friend class HttpError;
 	HttpServerConnection(Scheduler& scheduler,FD accept_fd);
 	void do_construct();
-	void read();
-	void gracefulClose(const char* reason="graceful close");
+	void gracefulClose(const char* reason=NULL);
 	// callbacks when a request comes in
 	virtual void on_request(const char* method,const char* uri) {}
 	virtual void on_header(const char* header,const char* value) {}
@@ -44,6 +43,8 @@ protected:
 	InLine<1024*5> line;
 	bool keep_alive;
 private:
+	void read();
+	void disconnected();
 	inline void finishHeader();
 private:
 	enum {

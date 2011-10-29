@@ -18,7 +18,6 @@
 class Readable {
 public:
 	virtual bool async_read(void* ptr,ssize_t bytes,ssize_t& read) = 0;
-	virtual bool async_read(void* ptr,ssize_t bytes) = 0;
 	virtual bool async_read(ResizeableBuffer& in,ssize_t& read,ssize_t max = 0) = 0;
 	virtual bool async_read_str(char* s,size_t& len,size_t max) = 0;
 	bool async_read_str(char* s,size_t max) { size_t len = strlen(s); return async_read_str(s,len,max); }
@@ -81,6 +80,7 @@ public:
 	bool Log(LogLevel level);
 	void SetLog(LogLevel level,bool enable);
 	void setReadAheadBufferSize(uint16_t size);
+	void setWriteBufferSize(uint16_t size);
 protected:
 	Task(Scheduler& scheduler,Task* parent = NULL);
 	void set_nonblocking();
@@ -99,7 +99,6 @@ protected:
 	void unschedule(uint32_t flags);
 	// implementing Readable
 	bool async_read(void* ptr,ssize_t bytes,ssize_t& read);
-	bool async_read(void* ptr,ssize_t bytes);
 	bool async_read_str(char *s,size_t& len,size_t max);
 	using Readable::async_read_str;
 	template<class InLine> bool async_read_in(InLine& in,size_t max = InLine::max);
@@ -112,6 +111,7 @@ protected:
 	void async_printf(const char* fmt,...);
 	void async_vprintf(const char* fmt,va_list ap);
 	void async_write_cpy(const void* ptr,size_t len);
+	void async_write_buffered(); // flushes anything buffered
 private: // to be implemented/overriden by subclasses
 	virtual void read() = 0;
 	virtual void disconnected();
@@ -124,14 +124,11 @@ protected:
 private:
 	static uint64_t nexttid();
 	void run(uint32_t flags);
-	bool async_write(const void* ptr,size_t len,size_t& written);
+	bool do_async_write(const void* ptr,size_t len,size_t& written);
 private:
 	unsigned log, logMask;
 	const uint64_t tid;
 	epoll_event event;
-	enum { MAX_BUF = 16 };
-	char buf[MAX_BUF];
-	ssize_t buflen;
 	Task* next_close;
 	bool del_ok;
 	bool closed;
@@ -157,6 +154,8 @@ private:
 	} timeout;
 	uint8_t* read_ahead_buffer;
 	uint16_t read_ahead_ofs, read_ahead_len, read_ahead_maxlen;
+	uint8_t* write_buffer;
+	uint16_t write_buffer_len, write_buffer_maxlen;
 private:
 	void set_timeout(Timeout::Data& to,Timeout::Data& other,uint32_t millisecs);
 	void unlink_timeout();

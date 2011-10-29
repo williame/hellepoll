@@ -73,10 +73,18 @@ private:
 
 template<typename T> class OutDelete: public Out {
 public:
-	OutDelete(const T* ptr,size_t len=sizeof(T)): Out(ptr,len) {}
+	OutDelete(const T& ptr,size_t len=sizeof(T)): Out(&ptr,len) {}
 	void release() { delete this; }
 private:
 	~OutDelete() { delete reinterpret_cast<const T*>(ptr); }
+};
+
+template<typename T> class OutDeleteArray: public Out {
+public:
+	OutDeleteArray(const T* ptr,size_t len): Out(ptr,sizeof(T)*len) {}
+	void release() { delete this; }
+private:
+	~OutDeleteArray() { delete[] reinterpret_cast<const T*>(ptr); }
 };
 
 class ResizeableBuffer {

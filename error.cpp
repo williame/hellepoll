@@ -105,7 +105,7 @@ void ThrowGracefulClose(const char* msg) {
 	struct GracefulClose: public virtual HalfClose {
 		void release() {}
 		void dump(const ErrorContext* context,FILE* out) {
-			if(msg) {
+			if(msg && *msg) {
 				dump_context(context,out);
 				fprintf(out,"%s\n",msg);
 			}

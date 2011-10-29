@@ -10,7 +10,7 @@ You only write this kind of code if you are concerned about speed :)
 <table border=1>
 <tr><td>benchmark<th>Tornado (Python)<th>node.js<th>deft (Java)<th>Hellepoll
 <tr align=right><th>ab -c25<td>2K<td>9K<td>13K<td>18K/s
-<tr align=right><th>ab -k -c25<td>7K<td>?<td>30K<td>40K/s+
+<tr align=right><th>ab -k -c25<td>7K<td>?<td>30K<td>60K/s+
 </table>
 
 (At 40K/sec on my laptop I am running out of memory bandwidth, and my CPU is not maxed out yet.  Numbers ought to be higher on normal server-like hardware.)

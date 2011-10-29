@@ -21,6 +21,7 @@ void HttpServerConnection::do_construct() {
 	check(fd);
 	schedule(EPOLLIN|EPOLLET);
 	setReadAheadBufferSize(sizeof(line));
+	setWriteBufferSize(4*1024);
 }
 
 void HttpServerConnection::dump_context(FILE* out) const {
@@ -162,7 +163,7 @@ void HttpServerConnection::write(const void* ptr,size_t len) {
 	finishHeader();
 	if(out_encoding_chunked)
 		async_printf("%zx\r\n",len);
-	async_write(ptr,len);
+	async_write_cpy(ptr,len);
 }
 
 void HttpServerConnection::write(const char* str) {
@@ -181,32 +182,37 @@ void HttpServerConnection::writef(const char* fmt,...) {
 		len = vasprintf(&s,fmt,ap);
 		check(len);
 		write(s,len);
-	} else 
+	} else
 		write(buf,len);
 	va_end(ap);
+}
+
+void HttpServerConnection::disconnected() {
+	if(!(keep_alive && write_state == LINE))
+		ThrowClientError("disconnected");
 }
 
 void HttpServerConnection::finish() {
 	finishHeader();
 	if(out_encoding_chunked) // finish chunk
 		async_write("0\r\n\r\n");
+	async_write_buffered();
 	if(keep_alive) {
 		write_state = LINE;
-		set_nodelay(true); // will flush it, approximately
+		set_nodelay(true); // flushes it
 		set_nodelay(false);
-	} else {
-		write_state = FINISHED;
-		gracefulClose("finished");
-	}
+	} else
+		gracefulClose();
 }
 
 void HttpServerConnection::gracefulClose(const char* reason) {
 	if(out) {
-		half_close = reason;
+		half_close = reason? reason: "";
 	} else {
 		shutdown(fd,SHUT_RD);
 		close();
 	}
+	write_state = FINISHED;
 }
 
 /*** HttpError ***/
