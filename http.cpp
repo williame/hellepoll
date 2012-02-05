@@ -152,7 +152,8 @@ void HttpServerConnection::finishHeader() {
 	if(write_state == LINE || write_state == HEADER) {
 		if(write_state == LINE)
 			writeResponseCode(200,"OK");
-		async_write("\r\n");
+		if(!out_encoding_chunked)
+			async_write("\r\n");
 		write_state = BODY;
 	} else if(write_state != BODY)
 		ThrowInternalError("connection not ready for body");
@@ -162,7 +163,7 @@ void HttpServerConnection::write(const void* ptr,size_t len) {
 	if(!len) return;
 	finishHeader();
 	if(out_encoding_chunked)
-		async_printf("%zx\r\n",len);
+		async_printf("\r\n%zx\r\n",len);
 	async_write_cpy(ptr,len);
 }
 
@@ -195,7 +196,7 @@ void HttpServerConnection::disconnected() {
 void HttpServerConnection::finish() {
 	finishHeader();
 	if(out_encoding_chunked) // finish chunk
-		async_write("0\r\n\r\n");
+		async_write("\r\n0\r\n\r\n");
 	async_write_buffered();
 	if(keep_alive) {
 		write_state = LINE;
